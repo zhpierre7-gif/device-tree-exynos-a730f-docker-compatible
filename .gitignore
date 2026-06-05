@@ -7,4 +7,3 @@
 docker-binaries/
 boot/
 !boot/.gitkeep
-screenshot.png
