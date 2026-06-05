@@ -1,0 +1,9 @@
+*.img
+*.bin
+*.tgz
+*.tar.xz
+*.zip
+*.gz
+docker-binaries/
+boot/
+!boot/.gitkeep
