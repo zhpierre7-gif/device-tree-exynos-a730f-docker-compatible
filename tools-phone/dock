@@ -12,8 +12,16 @@
 #=======================================================
 export SSL_CERT_FILE=/data/docker/certs/ca-certificates.crt
 
-# Check if dockerd is alive
-if ! [ -S /data/local/tmp/docker.sock ]; then
+# Check if dockerd is actually running (not just stale socket)
+if [ "$1" = "restart" ]; then
+    shift
+    echo "[dock] Forcing restart..."
+    killall -9 dockerd containerd 2>/dev/null
+    sleep 2
+    rm -f /data/docker/run/*.sock /data/docker/run/*.pid /data/local/tmp/docker.sock
+fi
+
+if ! docker -H unix:///data/local/tmp/docker.sock info >/dev/null 2>&1; then
     echo "[dock] Starting Docker..."
 
     # Force kill
