@@ -1,0 +1,4 @@
+#!/bin/bash
+# Open adb shell with Docker alias ready
+# Runs: alias dock=/data/local/tmp/dock
+adb shell "su -c 'exec /system/bin/sh'"

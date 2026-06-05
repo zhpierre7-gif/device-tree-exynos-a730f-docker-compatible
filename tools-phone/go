@@ -1,0 +1,7 @@
+#!/system/bin/sh
+# Docker A730F - single entry point
+# Usage: sh /sdcard/Docker/go ps
+#        sh /sdcard/Docker/go images
+#        sh /sdcard/Docker/go run --rm alpine sh
+export SSL_CERT_FILE=/data/docker/certs/ca-certificates.crt
+exec /data/local/tmp/dock "$@"

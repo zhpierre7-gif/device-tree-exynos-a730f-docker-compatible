@@ -1,0 +1,16 @@
+#!/bin/bash
+# Docker A730F CLI - run Docker commands from PC
+# Usage: ./dock <docker-command>
+#   ./dock ps
+#   ./dock images  
+#   ./dock run --rm alpine sh
+
+if [ -z "$1" ]; then
+    echo "Usage: dock <docker-command>"
+    echo "  dock ps"
+    echo "  dock images"
+    echo "  dock run --rm alpine sh"
+    exit 1
+fi
+
+adb shell "su -c 'export SSL_CERT_FILE=/data/docker/certs/ca-certificates.crt; /data/local/tmp/dock $*'" 2>&1
