@@ -1,5 +1,5 @@
 #!/bin/bash
 # Docker A730F - run from PC via adb
 # Usage: dock ps | dock images | dock run --rm alpine sh
-[ -z "$1" ] && echo "Usage: dock <cmd>" && exit 1
+[ -z "$1" ] && echo "Usage: dockerd <cmd>" && exit 1
 adb shell "su -c '/data/local/tmp/dock $*'" 2>&1

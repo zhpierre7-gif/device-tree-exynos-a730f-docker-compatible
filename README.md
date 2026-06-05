@@ -5,6 +5,19 @@
 **Docker:** v27.3.1 (oficial aarch64) | **GSI:** Android 11 treble_arm64_bvS  
 **Status:** ✅ **FUNCIONANDO** — `docker run hello-world` OK!
 
+## Rodando 1 Server No Docker No Android
+
+![Server running on A730F](screenshot.png)
+
+```bash
+# Python web server no Docker, porta 3000
+dock run -d --rm --network=host \
+  -v /sdcard/Docker/server.py:/server.py \
+  --name server python:alpine python /server.py
+```
+
+Acessível de qualquer dispositivo na rede: `http://<ip-do-celular>:3000`
+
 ---
 
 ## Estrutura do Projeto
