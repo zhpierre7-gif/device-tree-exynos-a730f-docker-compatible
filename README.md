@@ -1,8 +1,9 @@
-# A730F Docker Kernel — Android Rodando Docker Nativo
+# A730F Docker Kernel — ✅ Docker NATIVO no Android!
 
 **Dispositivo:** Samsung Galaxy A8 2018 (SM-A730F / jackpot2lte)  
-**SoC:** Exynos 7885 (ARM64) | **Kernel:** Linux 4.4.177  
-**Docker:** v27.3.1 (oficial aarch64) | **GSI:** Android 11 treble_arm64_bvS
+**SoC:** Exynos 7885 (ARM64) | **Kernel:** Linux 4.4.177 **build #7**  
+**Docker:** v27.3.1 (oficial aarch64) | **GSI:** Android 11 treble_arm64_bvS  
+**Status:** ✅ **FUNCIONANDO** — `docker run hello-world` OK!
 
 ---
 
@@ -86,6 +87,8 @@ Install → Install Image → boot.img → Boot → Swipe
 | CGROUP_PIDS | ❌ | ✓ |
 | CGROUP_DEVICE | ❌ | ✓ |
 | BRIDGE_NETFILTER | ❌ | ✓ |
+| POSIX_MQUEUE | ❌ | ✓ (dependência IPC_NS) |
+| IPC_NS | ❌ | ✓ (exigido pelo Docker) |
 | SECCOMP | ✓ | ✓ |
 | USER_NS | ❌ | ❌ (quebra boot Samsung) |
 | CPUSETS | ✓ | ❌ (incompatível Android) |

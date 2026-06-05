@@ -3,8 +3,10 @@
 **Data:** 04-05 Junho 2026  
 **Dispositivo:** Samsung Galaxy A8 2018 (SM-A730F / codename jackpot2lte)  
 **SoC:** Exynos 7885 (ARM64/aarch64)  
-**Kernel:** Linux 4.4.177  
-**Objetivo:** Rodar Docker nativamente no celular
+**Kernel:** Linux 4.4.177 (build #7 final)  
+**Docker:** 27.3.1 oficial aarch64  
+**Objetivo:** Rodar Docker nativamente no celular  
+**Resultado:** ✅ **SUCESSO — hello-world rodando!**
 
 ---
 
@@ -300,53 +302,103 @@ Configurar containerd com `--state /data/docker/containerd/state` (writable)
 
 ---
 
-## 12. Problema #10 (ATUAL): Container não inicia via Docker
+## 12. Problema #10: `docker run` falha — `can't get final child's PID from pipe: EOF`
 
 ### Diagnóstico
-```
-OCI runtime create failed: can't get final child's PID from pipe: EOF
-```
-- runc direto → **FUNCIONA** (container cria, executa, sai)
-- runc via Docker → **FALHA** (EOF no pipe)
-- runc debug mostra todos os estágios nsexec OK até `mount source thread: successfully running`
+Erro completo: `OCI runtime create failed: runc create failed: unable to start container process: can't get final child's PID from pipe: EOF`
 
-### Hipóteses
-- Containerd-shim-runc-v2 comunicação quebrada
-- Timeout ou pipe fechando antes do PID chegar
-- Namespace/ambiente diferente entre runc direto e via containerd
-- docker-init (tini) pode estar crashando
+- runc direto → FUNCIONA (container cria, executa, sai)
+- runc via Docker → FALHA (EOF no pipe)
+- `hello` binary executado direto no celular → FUNCIONA (imprime mensagem)
+- Significa: o binário roda, mas o namespace/clone falha
 
-### Próximos passos
-- Rodar runc via containerd diretamente (sem dockerd)
-- Usar `ctr` (containerd CLI) para criar container
-- Ajustar timeout/config do containerd
+### Investigação com runc --debug
+```
+nsexec-1[9551]: failed to unshare remaining namespaces: Invalid argument
+```
+`unshare(CLONE_NEWIPC)` retornando **EINVAL** = IPC namespace não suportado.
+
+### Causa Raiz
+Docker gera OCI spec com 4 namespaces: `["pid", "mount", "uts", "ipc"]`.  
+O kernel **NÃO** tinha `CONFIG_IPC_NS` ativado.
+
+Mas por que não tava? `CONFIG_IPC_NS` depende de `CONFIG_SYSVIPC` ou `CONFIG_POSIX_MQUEUE`. Nenhum dos dois estava ativado, então `olddefconfig` removia `IPC_NS` automaticamente.
+
+### Solução
+```bash
+echo "CONFIG_POSIX_MQUEUE=y" >> .config
+echo "CONFIG_IPC_NS=y" >> .config
+make olddefconfig && make -j$(nproc)
+```
+**Kernel build #7** com `IPC_NS=y` + `POSIX_MQUEUE=y`.
+
+### Também: /run read-only
+Containerd-shim tentava criar socket em `/run/containerd/s/` (read-only).  
+Solução: bind mount de diretório writable.
+```bash
+mkdir -p /data/docker/shim_sockets
+mount --bind /data/docker/shim_sockets /run/containerd/s
+```
+
+### Resultado Final
+```
+$ docker run --rm hello-world
+Hello from Docker!
+This message shows that your installation appears to be working correctly.
+```
+**✅ DOCKER FUNCIONANDO NO A730F!**
 
 ---
 
-## 13. Config Final do Kernel (funcionando)
+## 13. Config Final do Kernel (build #7 — FUNCIONANDO)
 
-Arquivo: `exynos7885-jackpot2lte_docker_nouserns_nocpuset`
+Defconfig base: `exynos7885-jackpot2lte_docker_nouserns_defconfig`  
+Modificações manuais:
 
 ```ini
+# Docker patches (do defconfig)
 CONFIG_CGROUP_PIDS=y
 CONFIG_CGROUP_DEVICE=y
 CONFIG_BRIDGE=y
 CONFIG_VETH=y
 CONFIG_OVERLAY_FS=y
 CONFIG_BRIDGE_NETFILTER=y
+
+# Docker patches (adicionados manualmente)
+CONFIG_POSIX_MQUEUE=y        ← Dependência do IPC_NS
+CONFIG_IPC_NS=y              ← O ÚLTIMO BUG! Docker exige IPC namespace
+
+# Desativados (incompatíveis com Samsung/Android)
+# CONFIG_USER_NS is not set   ← Quebra boot (Knox)
+# CONFIG_CPUSETS is not set   ← Android usa noprefix (incompatível)
+
+# Já existentes no stock
 CONFIG_SECCOMP=y
 CONFIG_SECCOMP_FILTER=y
-# CONFIG_USER_NS is not set     ← Quebra boot Samsung
-# CONFIG_CPUSETS is not set     ← Incompatível com Android
+CONFIG_NAMESPACES=y
+CONFIG_CGROUPS=y
+CONFIG_FAIR_GROUP_SCHED=y
 ```
 
-### Build command
+### Build command final
 ```bash
 export CROSS_COMPILE=~/Downloads/gcc-linaro-4.9.4-2017.01-x86_64_aarch64-linux-gnu/bin/aarch64-linux-gnu-
+export ANDROID_MAJOR_VERSION=p
+export PLATFORM_VERSION=9
+
 make exynos7885-jackpot2lte_docker_nouserns_defconfig
 sed -i 's/CONFIG_CPUSETS=y/# CONFIG_CPUSETS is not set/' .config
+echo "CONFIG_POSIX_MQUEUE=y" >> .config
+echo "CONFIG_IPC_NS=y" >> .config
 make olddefconfig
 make -j$(nproc)
+
+# Criar boot.img Samsung
+python3 tools-pc/mkboot_samsung.py \
+    arch/arm64/boot/Image \
+    boot/ramdisk_original.gz \
+    boot/boot_dtbh.bin \
+    boot/boot.img
 ```
 
 ---
@@ -354,68 +406,87 @@ make -j$(nproc)
 ## 14. Estrutura de Arquivos Final
 
 ```
-~/Downloads/
-├── kernel_jackpotlte/
-│   ├── boot_docker_final.img          ← Boot funcional (flashar este!)
-│   ├── boot_docker_samsung.img        ← Boot com DTBH (backup)
-│   ├── cronos.sh                      ← Build script atualizado
-│   ├── A730F_DOCKER_BUILD_LOG.md     ← Documentação
-│   └── start_docker.sh               ← Script de startup
-├── docker_a730f/
-│   ├── README.md                      ← Guia de uso
-│   ├── start_docker.sh               ← Script de startup (cópia)
-│   ├── stop_docker.sh                ← Script de parada
-│   └── test_config.json              ← Config OCI de teste
-├── gcc-linaro-4.9.4-2017.01-x86_64_aarch64-linux-gnu/
-│   └── bin/aarch64-linux-gnu-gcc     ← Compilador
-├── docker-27.3.1-aarch64.tgz         ← Docker oficial
-├── docker-aarch64/                    ← Binários antigos (DESCARTAR)
-├── Vendor-Quack_V2.6.zip             ← Vendor GSI
-├── boot_twrp_backup.img              ← Backup TWRP (referência)
-└── Universal7885-P/                   ← Fonte kernel upstream
-    └── android_device_samsung_jackpot2lte/  ← Device tree oficial
+~/Downloads/docker_a730f/          ← ★ Repo Git principal
+├── README.md                       ← Guia de uso rápido
+├── .gitignore
+├── boot/
+│   ├── boot.img                    ← ★ Kernel Docker final (flashar este!)
+│   ├── backup_twrp_boot.img        ← Backup TWRP do boot funcional
+│   ├── boot_dtbh.bin               ← DTBH Samsung extraído
+│   └── ramdisk_original.gz         ← Ramdisk do TWRP backup
+├── kernel-config/
+│   ├── 01-stock_docker.defconfig   ← Docker patches originais
+│   ├── 02-docker_nouserns.defconfig ← Docker sem USER_NS
+│   ├── 03-final_running.config     ← Config final build #7
+│   └── cronos.sh                   ← Build script
+├── tools-phone/                    ← Scripts pro celular (/sdcard/Docker/)
+│   ├── start.sh                    ← Inicia Docker (cgroups+containerd+dockerd)
+│   ├── stop.sh                     ← Para Docker
+│   ├── repair.sh                   ← Repara symlinks/certs
+│   └── docker-alias.sh             ← Alias: "docker" → socket correto
+├── tools-pc/                       ← Scripts pro Linux
+│   ├── build_kernel.sh             ← Compila kernel
+│   ├── flash_boot.sh               ← Flasheia boot via ADB
+│   ├── deploy_docker.sh            ← Envia Docker 27.3.1 pro celular
+│   └── mkboot_samsung.py           ← Cria boot.img com DTBH+SEANDROIDENFORCE
+├── docs/
+│   └── BUILD_LOG.md                ← ★ Este documento
+├── docker-binaries/                ← docker-27.3.1-aarch64.tgz
+└── logs-saved/                     ← Logs de debug
+
+~/Downloads/kernel_jackpotlte/      ← Fonte do kernel (build directory)
+├── arch/arm64/boot/Image           ← Kernel compilado (não comprimido)
+├── cronos.sh                       ← Build script original
+└── .config                         ← Config atual
 
 Celular:
-├── /data/local/tmp/docker27/          ← Binários Docker 27
-├── /data/docker/                      ← Dados Docker
-├── /sdcard/Docker/                    ← Scripts e README
-└── /sdcard/boot_docker_final.img     ← Boot final
+├── /data/local/tmp/docker27/       ← Binários Docker 27.3.1
+├── /data/docker/                   ← Dados Docker (containers, imagens)
+└── /sdcard/Docker/                 ← Scripts + README + boot.img
+    ├── tools-phone/
+    ├── README.md
+    └── boot.img
 ```
 
 ---
 
-## 15. Checklist do que Funciona
+## 15. Checklist Final — Tudo Funcionando
 
-| Item                             | Status |
-|---|---|
-| Kernel compilado (GCC 4.9)       | ✓ |
-| Boot com DTBH + SEANDROIDENFORCE | ✓ |
-| OVERLAY_FS, BRIDGE, VETH         | ✓ |
-| CGROUP_PIDS, CGROUP_DEVICE       | ✓ |
-| SECCOMP                          | ✓ |
-| Boot sem USER_NS                 | ✓ |
-| Boot sem CPUSETS                 | ✓ |
-| Docker 27.3.1 binary             | ✓ |
-| CA certificates                  | ✓ |
-| DNS (8.8.8.8)                    | ✓ |
-| Cgroups montados                 | ✓ |
-| dockerd iniciando                | ✓ |
-| containerd iniciando             | ✓ |
-| docker pull (hello-world)        | ✓ |
-| runc direto cria container       | ✓ |
-| docker run container             | ❌ (em andamento) |
+| # | Item | Status |
+|---|---|---|
+| 1 | Kernel compilado (GCC 4.9) | ✅ |
+| 2 | Boot com DTBH + SEANDROIDENFORCE | ✅ |
+| 3 | OVERLAY_FS, BRIDGE, VETH | ✅ |
+| 4 | CGROUP_PIDS, CGROUP_DEVICE | ✅ |
+| 5 | SECCOMP | ✅ |
+| 6 | POSIX_MQUEUE | ✅ |
+| 7 | IPC_NS (o último bug!) | ✅ |
+| 8 | Boot sem USER_NS (não quebra Samsung) | ✅ |
+| 9 | Boot sem CPUSETS (não conflita Android) | ✅ |
+| 10 | Docker 27.3.1 binary compatível | ✅ |
+| 11 | CA certificates | ✅ |
+| 12 | DNS (8.8.8.8) | ✅ |
+| 13 | Cgroups montados (/sys/fs/cgroup/*) | ✅ |
+| 14 | dockerd iniciando | ✅ |
+| 15 | containerd iniciando | ✅ |
+| 16 | docker pull (hello-world) | ✅ |
+| 17 | docker run container | ✅ |
+| 18 | hello-world output | ✅ |
 
 ---
 
-## 16. Lições Aprendidas
+## 16. Lições Aprendidas (13 no total)
 
-1. **Nunca usar kernel comprimido em Samsung Exynos** — bootloader não suporta
-2. **SEANDROIDENFORCE é obrigatório** — sem ele bootloader rejeita
-3. **DTBH é formato proprietário Samsung** — tabela de DTB com header especial
-4. **BoardConfig.mk do device tree oficial tem TODAS as respostas**
-5. **CONFIG_USER_NS quebra boot em Samsung** (Knox conflita)
-6. **CONFIG_CPUSETS do Android é incompatível** com Docker (noprefix)
-7. **Binários Go stripped quebram no Android** (linker64 rejeita)
-8. **Android monta cgroups em paths não-padrão** — precisa remontar
-9. **Toolchain precisa ser compatível** — GCC 16 não compila kernel 4.4
-10. **O path da partição boot é 13500000.dwmmc0, não 13520000**
+1. **Nunca usar kernel comprimido em Samsung Exynos** — bootloader não suporta gzip
+2. **SEANDROIDENFORCE é obrigatório** — 16 bytes mágicos no final do boot.img
+3. **DTBH é formato proprietário Samsung** — tabela de DTB com header `DTBH`, campos `unused[0]` e `unused[1]` no header
+4. **BoardConfig.mk do device tree oficial tem TODAS as respostas** — `prashantpaddune/android_device_samsung_jackpot2lte`
+5. **CONFIG_USER_NS quebra boot em Samsung** (Knox/Secure OS conflita)
+6. **CONFIG_CPUSETS do Android é incompatível** com Docker (kernel patch `noprefix` renomeia `cpuset.cpus` → `cpus`)
+7. **Binários Go stripped quebram no Android** — `linker64` rejeita ELFs sem section headers
+8. **Android monta cgroups em paths não-padrão** — precisa remontar em `/sys/fs/cgroup/`
+9. **Toolchain precisa ser compatível** — GCC 16 não compila kernel 4.4 (GCC 4.9 requerido)
+10. **O path da partição boot é `13500000.dwmmc0`, não `13520000`**
+11. **CONFIG_IPC_NS depende de CONFIG_POSIX_MQUEUE ou CONFIG_SYSVIPC** — se nenhum estiver ativado, IPC_NS é silenciosamente removido pelo `olddefconfig`
+12. **Docker 27.3.1 (Go 1.22.7) funciona no Android, binários Go 1.26.4+ dão segfault** no kernel 4.4
+13. **`/run/containerd/s` precisa ser writable** — bind mount de `/data/docker/shim_sockets` resolve
